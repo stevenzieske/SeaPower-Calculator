@@ -7,9 +7,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func RenderTUI(missiles []models.WeaponData) {
+func RenderTUI(weapons []models.WeaponData) {
 	p := tea.NewProgram(
-		models.InitialModel(missiles),
+		models.InitialModel(weapons),
 		tea.WithAltScreen(),
 	)
 

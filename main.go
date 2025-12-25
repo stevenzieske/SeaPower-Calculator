@@ -9,8 +9,8 @@ import (
 var cfg = configs.Load()
 
 func main() {
-	missiles := data.LoadMissileData()
-	// log.Println(missiles)
+	weapons := data.LoadMissileData()
+	// log.Println(weapons)
 
-	tui.RenderTUI(missiles)
+	tui.RenderTUI(weapons)
 }
