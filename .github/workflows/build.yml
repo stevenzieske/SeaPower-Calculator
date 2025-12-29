@@ -36,7 +36,6 @@ jobs:
         GOOS: ${{ matrix.goos }}
         GOARCH: ${{ matrix.goarch }}
         CGO_ENABLED: 0
-        GOTOOLCHAIN: local
       run: |
         # Set output filename based on OS
         if [ "$GOOS" = "windows" ]; then
