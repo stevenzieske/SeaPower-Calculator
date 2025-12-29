@@ -503,7 +503,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if m.Focused == "search" {
 			switch msg.String() {
-			case "esc":
+			case "esc", "enter":
 				m.Focused = "table"
 				m.SearchInput.Blur()
 				return m, nil
@@ -828,7 +828,7 @@ func (m Model) View() string {
 		if len(m.SelectedWeapons) > 0 {
 			helpText += fmt.Sprintf(" • Selection %d/%d", m.SelectionCursor+1, len(m.SelectedWeapons))
 		}
-	} else if m.Focused == "rangeInput" {
+	} else if m.Focused == "rangeInput" || m.Focused == "search" {
 		helpText += " • Enter/Esc: Done"
 	}
 
