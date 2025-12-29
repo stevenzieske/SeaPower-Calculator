@@ -44,8 +44,8 @@ jobs:
           OUTPUT_NAME="seapower-calculator-$GOOS-$GOARCH"
         fi
 
-        # Build the binary
-        go build -v -trimpath -ldflags="-s -w" -o "$OUTPUT_NAME" ./main.go
+        # Build the module (not just main.go)
+        go build -v -trimpath -ldflags="-s -w" -o "$OUTPUT_NAME" .
 
         # Verify the build
         ls -lh "$OUTPUT_NAME"
