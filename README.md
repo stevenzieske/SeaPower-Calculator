@@ -9,6 +9,8 @@ A terminal-based calculator for Sea Power game weapon data analysis. This intera
 - Delta time mode for comparing different ranges
 - Interactive terminal interface with keyboard navigation
 - Cross-platform support (Windows, macOS, Linux)
+<img width="2559" height="1360" alt="2025-12-30 00_26_45-" src="https://github.com/user-attachments/assets/7eaff66d-9abf-45cf-b37a-73e14f1cd291" />
+<img width="2560" height="1357" alt="2025-12-30 00_28_12-Downloads - File Explorer" src="https://github.com/user-attachments/assets/bdc343f8-5cdf-40f4-a46d-089bedf0091f" />
 
 ## Requirements
 
