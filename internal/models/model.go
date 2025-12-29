@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"seapower_calculator/internal/helper"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -22,6 +23,7 @@ type Model struct {
 	TableCursor           int
 	SearchInput           textinput.Model
 	RangeInput            textinput.Model
+	RangeInputs           []textinput.Model // Range inputs for each weapon in delta time mode
 	Renderer              *lipgloss.Renderer
 	TableScrollOffset     int
 	SelectedWeapons       []WeaponData
@@ -29,6 +31,8 @@ type Model struct {
 	SelectionCursor       int
 	Focused               string
 	WeaponData            []WeaponData
+	CalculationMode       string // "flightTime" or "deltaTime"
+	IsSorted              bool   // Track if selections are sorted
 }
 
 type HeaderColumn struct {
@@ -50,9 +54,15 @@ func (m *Model) renderSelections() string {
 		return "No weapons selected"
 	}
 
-	// Calculate how many items fit (each item is ~11 lines with border/padding)
+	// Calculate how many items fit (each item height varies by mode)
 	availableHeight := m.Height - 5 // Account for borders and help bar
-	maxVisibleItems := availableHeight / 10
+	var maxVisibleItems int
+	if m.CalculationMode == "flightTime" {
+		maxVisibleItems = availableHeight / 10
+	} else if m.CalculationMode == "deltaTime" {
+		// In delta time mode, items take up more space (especially when sorted)
+		maxVisibleItems = availableHeight / 14
+	}
 	if maxVisibleItems < 1 {
 		maxVisibleItems = 1
 	}
@@ -75,57 +85,83 @@ func (m *Model) renderSelections() string {
 		selections = append(selections, indicator)
 	}
 
-	// Calculate flight time if range is entered and valid
-	flightTimeText := "Flight time: N/A"
-	var flightTimeHours float64 // Store for calculating ranges of other weapons
-	enteredRange := m.RangeInput.Value()
-	if enteredRange != "" && len(m.SelectedWeapons) > 0 {
-		// Parse entered range
-		rangeValue, errRange := strconv.ParseFloat(enteredRange, 64)
+	// Mode indicator and calculations
+	var headerText string
+	var flightTimeHours float64 // Store for calculating ranges of other weapons in flightTime mode
 
-		// Parse velocity from first weapon
-		velocityStr := m.SelectedWeapons[0].WeaponProperties.MaxVelocity
-		velocityValue, errVel := strconv.ParseFloat(velocityStr, 64)
+	if m.CalculationMode == "flightTime" {
+		// Calculate flight time if range is entered and valid
+		flightTimeText := "Flight time: N/A"
+		enteredRange := m.RangeInput.Value()
+		if enteredRange != "" && len(m.SelectedWeapons) > 0 {
+			// Parse entered range
+			rangeValue, errRange := strconv.ParseFloat(enteredRange, 64)
 
-		// Parse min/max range
-		minRangeStr := m.SelectedWeapons[0].WeaponProperties.MinLaunchRange
-		maxRangeStr := m.SelectedWeapons[0].WeaponProperties.MaxLaunchRange
-		minRange, errMin := strconv.ParseFloat(minRangeStr, 64)
-		maxRange, errMax := strconv.ParseFloat(maxRangeStr, 64)
+			// Parse velocity from first weapon
+			velocityStr := m.SelectedWeapons[0].WeaponProperties.MaxVelocity
+			velocityValue, errVel := strconv.ParseFloat(velocityStr, 64)
 
-		// Only calculate if range is valid and within bounds
-		if errRange == nil && errVel == nil && errMin == nil && errMax == nil {
-			if rangeValue >= minRange && rangeValue <= maxRange {
-				// Calculate flight time in hours
-				flightTimeHours = helper.CalculateFlightTime(int64(velocityValue), int64(rangeValue))
+			// Parse min/max range
+			minRangeStr := m.SelectedWeapons[0].WeaponProperties.MinLaunchRange
+			maxRangeStr := m.SelectedWeapons[0].WeaponProperties.MaxLaunchRange
+			minRange, errMin := strconv.ParseFloat(minRangeStr, 64)
+			maxRange, errMax := strconv.ParseFloat(maxRangeStr, 64)
 
-				// Convert to hours, minutes, and seconds for display
-				hours := int(flightTimeHours)
-				remainingAfterHours := flightTimeHours - float64(hours)
-				totalMinutes := remainingAfterHours * 60
-				minutes := int(totalMinutes)
-				seconds := int((totalMinutes - float64(minutes)) * 60)
+			// Only calculate if range is valid and within bounds
+			if errRange == nil && errVel == nil && errMin == nil && errMax == nil {
+				if rangeValue >= minRange && rangeValue <= maxRange {
+					// Calculate flight time in hours
+					flightTimeHours = helper.CalculateFlightTime(int64(velocityValue), int64(rangeValue))
 
-				if hours > 0 {
-					flightTimeText = fmt.Sprintf("Flight time: %dh %dm %ds", hours, minutes, seconds)
-				} else if minutes > 0 {
-					flightTimeText = fmt.Sprintf("Flight time: %dm %ds", minutes, seconds)
-				} else {
-					flightTimeText = fmt.Sprintf("Flight time: %ds", seconds)
+					// Convert to hours, minutes, and seconds for display
+					hours := int(flightTimeHours)
+					remainingAfterHours := flightTimeHours - float64(hours)
+					totalMinutes := remainingAfterHours * 60
+					minutes := int(totalMinutes)
+					seconds := int((totalMinutes - float64(minutes)) * 60)
+
+					if hours > 0 {
+						flightTimeText = fmt.Sprintf("Flight time: %dh %dm %ds", hours, minutes, seconds)
+					} else if minutes > 0 {
+						flightTimeText = fmt.Sprintf("Flight time: %dm %ds", minutes, seconds)
+					} else {
+						flightTimeText = fmt.Sprintf("Flight time: %ds", seconds)
+					}
 				}
 			}
 		}
+		headerText = flightTimeText
+	} else {
+		headerText = "Mode: Delta Time Calculation"
 	}
 
-	flightTime := lipgloss.NewStyle().
+	header := lipgloss.NewStyle().
 		Width(m.Width/2-4).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("238")).
 		Foreground(lipgloss.Color("226")).
 		Bold(true).
 		Padding(0, 1).
-		Render(flightTimeText)
-	selections = append(selections, flightTime)
+		Render(headerText)
+	selections = append(selections, header)
+
+	// In deltaTime mode, calculate all flight times and find maximum
+	var flightTimes []float64
+	var maxFlightTime float64
+	if m.CalculationMode == "deltaTime" && len(m.RangeInputs) == len(m.SelectedWeapons) {
+		flightTimes = make([]float64, len(m.SelectedWeapons))
+		for i := range m.SelectedWeapons {
+			rangeValue, errRange := strconv.ParseFloat(m.RangeInputs[i].Value(), 64)
+			velocityValue, errVel := strconv.ParseFloat(m.SelectedWeapons[i].WeaponProperties.MaxVelocity, 64)
+
+			if errRange == nil && errVel == nil && rangeValue > 0 && velocityValue > 0 {
+				flightTimes[i] = helper.CalculateFlightTime(int64(velocityValue), int64(rangeValue))
+				if flightTimes[i] > maxFlightTime {
+					maxFlightTime = flightTimes[i]
+				}
+			}
+		}
+	}
 
 	for i := startIdx; i < endIdx; i++ {
 		selectedWeapon := m.SelectedWeapons[i]
@@ -140,38 +176,121 @@ func (m *Model) renderSelections() string {
 			selectedWeapon.WeaponProperties.MinLaunchRange+" - "+selectedWeapon.WeaponProperties.MaxLaunchRange,
 		)
 
-		// For weapons after the first, calculate range using flight time from first weapon
-		if i > 0 && flightTimeHours > 0 {
-			// Parse velocity of this weapon
-			velocityValue, err := strconv.ParseFloat(selectedWeapon.WeaponProperties.MaxVelocity, 64)
-			if err == nil {
-				// Calculate range for this weapon using the same flight time
-				calculatedRange := helper.CalculateRange(int64(velocityValue), flightTimeHours)
+		// Mode-specific calculations
+		if m.CalculationMode == "flightTime" {
+			// For weapons after the first, calculate range using flight time from first weapon
+			if i > 0 && flightTimeHours > 0 {
+				// Parse velocity of this weapon
+				velocityValue, err := strconv.ParseFloat(selectedWeapon.WeaponProperties.MaxVelocity, 64)
+				if err == nil {
+					// Calculate range for this weapon using the same flight time
+					calculatedRange := helper.CalculateRange(int64(velocityValue), flightTimeHours)
 
-				// Parse min/max range for validation
-				minRange, errMin := strconv.ParseFloat(selectedWeapon.WeaponProperties.MinLaunchRange, 64)
-				maxRange, errMax := strconv.ParseFloat(selectedWeapon.WeaponProperties.MaxLaunchRange, 64)
+					// Parse min/max range for validation
+					minRange, errMin := strconv.ParseFloat(selectedWeapon.WeaponProperties.MinLaunchRange, 64)
+					maxRange, errMax := strconv.ParseFloat(selectedWeapon.WeaponProperties.MaxLaunchRange, 64)
 
-				// Display calculated range with validation
-				rangeText := fmt.Sprintf("%.1f nm", calculatedRange)
-				rangeColor := lipgloss.Color("255") // Default white
+					// Display calculated range with validation
+					rangeText := fmt.Sprintf("%.1f nm", calculatedRange)
+					rangeColor := lipgloss.Color("255") // Default white
 
-				if errMin == nil && errMax == nil {
-					if calculatedRange < minRange || calculatedRange > maxRange {
-						rangeText += " ⚠ OUT OF RANGE"
-						rangeColor = lipgloss.Color("196") // Red
-					} else {
-						rangeText += " ✓"
-						rangeColor = lipgloss.Color("46") // Green
+					if errMin == nil && errMax == nil {
+						if calculatedRange < minRange || calculatedRange > maxRange {
+							rangeText += " ⚠ OUT OF RANGE"
+							rangeColor = lipgloss.Color("196") // Red
+						} else {
+							rangeText += " ✓"
+							rangeColor = lipgloss.Color("46") // Green
+						}
 					}
+
+					styledRangeText := lipgloss.NewStyle().
+						Foreground(rangeColor).
+						Bold(true).
+						Render(rangeText)
+
+					info += fmt.Sprintf("\nCALCULATED RANGE: %s", styledRangeText)
 				}
+			}
+		} else if m.CalculationMode == "deltaTime" && maxFlightTime > 0 {
+			var deltaTexts []string
+			var deltaColor lipgloss.Color
 
-				styledRangeText := lipgloss.NewStyle().
-					Foreground(rangeColor).
+			if m.IsSorted && i > 0 {
+				// When sorted, show delta time to previous weapon
+				deltaTime := flightTimes[i-1] - flightTimes[i]
+
+				// Convert delta time to hours, minutes, seconds
+				hours := int(deltaTime)
+				remainingAfterHours := deltaTime - float64(hours)
+				totalMinutes := remainingAfterHours * 60
+				minutes := int(totalMinutes)
+				seconds := int((totalMinutes - float64(minutes)) * 60)
+
+				var deltaTextPrev string
+				if hours > 0 {
+					deltaTextPrev = fmt.Sprintf("Deploy after previous: %dh %dm %ds", hours, minutes, seconds)
+				} else if minutes > 0 {
+					deltaTextPrev = fmt.Sprintf("Deploy after previous: %dm %ds", minutes, seconds)
+				} else {
+					deltaTextPrev = fmt.Sprintf("Deploy after previous: %ds", seconds)
+				}
+				deltaTexts = append(deltaTexts, deltaTextPrev)
+
+				// Also show time relative to first weapon
+				deltaTimeFirst := flightTimes[0] - flightTimes[i]
+				hours = int(deltaTimeFirst)
+				remainingAfterHours = deltaTimeFirst - float64(hours)
+				totalMinutes = remainingAfterHours * 60
+				minutes = int(totalMinutes)
+				seconds = int((totalMinutes - float64(minutes)) * 60)
+
+				var deltaTextFirst string
+				if hours > 0 {
+					deltaTextFirst = fmt.Sprintf("Deploy after first: %dh %dm %ds", hours, minutes, seconds)
+				} else if minutes > 0 {
+					deltaTextFirst = fmt.Sprintf("Deploy after first: %dm %ds", minutes, seconds)
+				} else {
+					deltaTextFirst = fmt.Sprintf("Deploy after first: %ds", seconds)
+				}
+				deltaTexts = append(deltaTexts, deltaTextFirst)
+				deltaColor = lipgloss.Color("46") // Green
+			} else {
+				// When not sorted, show delta time to slowest weapon
+				deltaTime := maxFlightTime - flightTimes[i]
+
+				// Convert delta time to hours, minutes, seconds
+				hours := int(deltaTime)
+				remainingAfterHours := deltaTime - float64(hours)
+				totalMinutes := remainingAfterHours * 60
+				minutes := int(totalMinutes)
+				seconds := int((totalMinutes - float64(minutes)) * 60)
+
+				if deltaTime == 0 {
+					deltaTexts = append(deltaTexts, "Deploy: NOW (slowest weapon)")
+					deltaColor = lipgloss.Color("226") // Yellow for the first to deploy
+				} else {
+					var deltaText string
+					if hours > 0 {
+						deltaText = fmt.Sprintf("Deploy after slowest: %dh %dm %ds", hours, minutes, seconds)
+					} else if minutes > 0 {
+						deltaText = fmt.Sprintf("Deploy after slowest: %dm %ds", minutes, seconds)
+					} else {
+						deltaText = fmt.Sprintf("Deploy after slowest: %ds", seconds)
+					}
+					deltaTexts = append(deltaTexts, deltaText)
+					deltaColor = lipgloss.Color("46") // Green
+				}
+			}
+
+			// Render all delta texts
+			for _, deltaText := range deltaTexts {
+				styledDeltaText := lipgloss.NewStyle().
+					Foreground(deltaColor).
 					Bold(true).
-					Render(rangeText)
+					Render(deltaText)
 
-				info += fmt.Sprintf("\nCALCULATED RANGE: %s", styledRangeText)
+				info += fmt.Sprintf("\n%s", styledDeltaText)
 			}
 		}
 
@@ -181,9 +300,9 @@ func (m *Model) renderSelections() string {
 			Border(lipgloss.RoundedBorder()).
 			MarginBottom(1)
 
-		// Always show range input for first item
-		if i == 0 {
-			// Validate range input
+		// Show range input based on mode
+		if m.CalculationMode == "flightTime" && i == 0 {
+			// Only first weapon gets range input in flightTime mode
 			labelColor := lipgloss.Color("238") // Default gray
 			enteredRange := m.RangeInput.Value()
 			if enteredRange != "" {
@@ -220,6 +339,39 @@ func (m *Model) renderSelections() string {
 				Border(lipgloss.RoundedBorder()).
 				Foreground(lipgloss.Color("230")).
 				Bold(true)
+		} else if m.CalculationMode == "deltaTime" && i < len(m.RangeInputs) {
+			// All weapons get range input in deltaTime mode
+			labelColor := lipgloss.Color("238") // Default gray
+			enteredRange := m.RangeInputs[i].Value()
+			if enteredRange != "" {
+				// Parse the entered range and weapon's min/max
+				var enteredValue float64
+				_, err := fmt.Sscanf(enteredRange, "%f", &enteredValue)
+
+				var minRange, maxRange float64
+				_, errMin := fmt.Sscanf(selectedWeapon.WeaponProperties.MinLaunchRange, "%f", &minRange)
+				_, errMax := fmt.Sscanf(selectedWeapon.WeaponProperties.MaxLaunchRange, "%f", &maxRange)
+
+				// Check if parsing failed (invalid input)
+				if err != nil {
+					labelColor = lipgloss.Color("196") // Red - invalid input
+				} else if errMin == nil && errMax == nil {
+					// If parsing succeeded, check if in range
+					if enteredValue < minRange || enteredValue > maxRange {
+						labelColor = lipgloss.Color("196") // Red - out of range
+					} else {
+						labelColor = lipgloss.Color("46") // Green - valid and in range
+					}
+				}
+			}
+
+			rangeInputStyle := lipgloss.NewStyle().
+				Width(m.Width/2-12).
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(labelColor).
+				Padding(0, 1)
+			rangeBox := rangeInputStyle.Render("Deploy Range (nm): " + m.RangeInputs[i].View())
+			info += "\n" + rangeBox
 		}
 
 		// Highlight the cursor selection with different color
@@ -344,7 +496,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if m.Focused == "leftSection" {
 			availableHeight := m.Height - 5
-			maxVisibleItems := availableHeight / 11
+			var maxVisibleItems int
+			if m.CalculationMode == "flightTime" {
+				maxVisibleItems = availableHeight / 10
+			} else if m.CalculationMode == "deltaTime" {
+				maxVisibleItems = availableHeight / 14
+			}
 			if maxVisibleItems < 1 {
 				maxVisibleItems = 1
 			}
@@ -382,6 +539,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Remove the selected weapon
 					m.SelectedWeapons = append(m.SelectedWeapons[:m.SelectionCursor], m.SelectedWeapons[m.SelectionCursor+1:]...)
 
+					// In deltaTime mode, also remove the corresponding range input
+					if m.CalculationMode == "deltaTime" && m.SelectionCursor < len(m.RangeInputs) {
+						m.RangeInputs = append(m.RangeInputs[:m.SelectionCursor], m.RangeInputs[m.SelectionCursor+1:]...)
+					}
+
 					// Adjust cursor if needed
 					if m.SelectionCursor >= len(m.SelectedWeapons) && m.SelectionCursor > 0 {
 						m.SelectionCursor--
@@ -396,15 +558,113 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if len(m.SelectedWeapons) == 0 {
 						m.RangeInput.SetValue("")
 					}
+
+					// Reset sort state when removing weapons
+					m.IsSorted = false
 				}
 			case "/":
 				// Focus the range input field
 				m.Focused = "rangeInput"
-				m.RangeInput.Focus()
-				// Scroll to top to show the range input (on first item)
-				m.SelectionCursor = 0
-				m.SelectionScrollOffset = 0
+				if m.CalculationMode == "flightTime" {
+					m.RangeInput.Focus()
+					// Scroll to top to show the range input (on first item)
+					m.SelectionCursor = 0
+					m.SelectionScrollOffset = 0
+				} else if m.CalculationMode == "deltaTime" && m.SelectionCursor < len(m.RangeInputs) {
+					m.RangeInputs[m.SelectionCursor].Focus()
+				}
 				return m, nil
+			case "s":
+				// Sort selections
+				if len(m.SelectedWeapons) > 1 {
+					if m.CalculationMode == "flightTime" {
+						// Sort by calculated range in flightTime mode (excluding first weapon)
+						enteredRange := m.RangeInput.Value()
+						if enteredRange != "" && len(m.SelectedWeapons) > 1 {
+							rangeValue, errRange := strconv.ParseFloat(enteredRange, 64)
+							velocityStr := m.SelectedWeapons[0].WeaponProperties.MaxVelocity
+							velocityValue, errVel := strconv.ParseFloat(velocityStr, 64)
+							minRangeStr := m.SelectedWeapons[0].WeaponProperties.MinLaunchRange
+							maxRangeStr := m.SelectedWeapons[0].WeaponProperties.MaxLaunchRange
+							minRange, errMin := strconv.ParseFloat(minRangeStr, 64)
+							maxRange, errMax := strconv.ParseFloat(maxRangeStr, 64)
+
+							if errRange == nil && errVel == nil && errMin == nil && errMax == nil {
+								if rangeValue >= minRange && rangeValue <= maxRange {
+									flightTimeHours := helper.CalculateFlightTime(int64(velocityValue), int64(rangeValue))
+
+									// Create slice of weapons with their calculated ranges (excluding first)
+									type weaponWithRange struct {
+										weapon WeaponData
+										range_ float64
+									}
+									weaponsWithRanges := make([]weaponWithRange, len(m.SelectedWeapons)-1)
+
+									for i := 1; i < len(m.SelectedWeapons); i++ {
+										vel, err := strconv.ParseFloat(m.SelectedWeapons[i].WeaponProperties.MaxVelocity, 64)
+										if err == nil {
+											calcRange := helper.CalculateRange(int64(vel), flightTimeHours)
+											weaponsWithRanges[i-1] = weaponWithRange{m.SelectedWeapons[i], calcRange}
+										} else {
+											weaponsWithRanges[i-1] = weaponWithRange{m.SelectedWeapons[i], 0}
+										}
+									}
+
+									// Sort by range (ascending)
+									sort.Slice(weaponsWithRanges, func(i, j int) bool {
+										return weaponsWithRanges[i].range_ < weaponsWithRanges[j].range_
+									})
+
+									// Update selected weapons with sorted order (keep first weapon first)
+									for i := range weaponsWithRanges {
+										m.SelectedWeapons[i+1] = weaponsWithRanges[i].weapon
+									}
+									m.IsSorted = true
+									m.SelectionCursor = 0
+									m.SelectionScrollOffset = 0
+								}
+							}
+						}
+					} else if m.CalculationMode == "deltaTime" && len(m.RangeInputs) == len(m.SelectedWeapons) {
+						// Sort by delta time (flight time) in deltaTime mode
+						type weaponWithTime struct {
+							weapon     WeaponData
+							rangeInput textinput.Model
+							flightTime float64
+						}
+						weaponsWithTimes := make([]weaponWithTime, len(m.SelectedWeapons))
+
+						for i := range m.SelectedWeapons {
+							rangeValue, errRange := strconv.ParseFloat(m.RangeInputs[i].Value(), 64)
+							velocityValue, errVel := strconv.ParseFloat(m.SelectedWeapons[i].WeaponProperties.MaxVelocity, 64)
+
+							var flightTime float64
+							if errRange == nil && errVel == nil && rangeValue > 0 && velocityValue > 0 {
+								flightTime = helper.CalculateFlightTime(int64(velocityValue), int64(rangeValue))
+							}
+
+							weaponsWithTimes[i] = weaponWithTime{
+								weapon:     m.SelectedWeapons[i],
+								rangeInput: m.RangeInputs[i],
+								flightTime: flightTime,
+							}
+						}
+
+						// Sort by flight time (descending - longest first)
+						sort.Slice(weaponsWithTimes, func(i, j int) bool {
+							return weaponsWithTimes[i].flightTime > weaponsWithTimes[j].flightTime
+						})
+
+						// Update selected weapons and range inputs with sorted order
+						for i := range weaponsWithTimes {
+							m.SelectedWeapons[i] = weaponsWithTimes[i].weapon
+							m.RangeInputs[i] = weaponsWithTimes[i].rangeInput
+						}
+						m.IsSorted = true
+						m.SelectionCursor = 0
+						m.SelectionScrollOffset = 0
+					}
+				}
 			}
 		}
 
@@ -412,10 +672,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "esc", "enter":
 				m.Focused = "leftSection"
-				m.RangeInput.Blur()
+				if m.CalculationMode == "flightTime" {
+					m.RangeInput.Blur()
+				} else if m.CalculationMode == "deltaTime" && m.SelectionCursor < len(m.RangeInputs) {
+					m.RangeInputs[m.SelectionCursor].Blur()
+				}
 				return m, nil
 			}
-			m.RangeInput, cmd = m.RangeInput.Update(msg)
+
+			if m.CalculationMode == "flightTime" {
+				m.RangeInput, cmd = m.RangeInput.Update(msg)
+			} else if m.CalculationMode == "deltaTime" && m.SelectionCursor < len(m.RangeInputs) {
+				m.RangeInputs[m.SelectionCursor], cmd = m.RangeInputs[m.SelectionCursor].Update(msg)
+			}
 			return m, cmd
 		}
 
@@ -460,27 +729,61 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						if len(m.SelectedWeapons) == 1 {
 							m.SelectionCursor = 0
 						}
+						// In deltaTime mode, add a new range input for the new weapon
+						if m.CalculationMode == "deltaTime" {
+							m.RangeInputs = append(m.RangeInputs, textinput.New())
+						}
+						// Reset sort state when adding weapons
+						m.IsSorted = false
 						break
 					}
 				}
-			case "R":
-				m.Focused = "table"
-				m.SelectedWeapons = []WeaponData{}
-				m.SelectionCursor = 0
-				m.SelectionScrollOffset = 0
-				m.FilteredTableRows = m.AllTableRows
-				m.SearchInput.SetValue("")
-				m.RangeInput.SetValue("")
-				m.TableCursor = 0
-				m.TableScrollOffset = 0
-				m.rebuildTable()
-				return m, nil
 			}
 		}
 
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "R":
+			m.Focused = "table"
+			m.SelectedWeapons = []WeaponData{}
+			m.SelectionCursor = 0
+			m.SelectionScrollOffset = 0
+			m.FilteredTableRows = m.AllTableRows
+			m.SearchInput.SetValue("")
+			m.RangeInput.SetValue("")
+			m.RangeInputs = []textinput.Model{}
+			m.TableCursor = 0
+			m.TableScrollOffset = 0
+			m.IsSorted = false
+			m.rebuildTable()
+			return m, nil
+		case "tab":
+			// Blur any focused inputs before switching modes
+			if m.Focused == "rangeInput" {
+				if m.CalculationMode == "flightTime" {
+					m.RangeInput.Blur()
+				} else if m.CalculationMode == "deltaTime" && m.SelectionCursor < len(m.RangeInputs) {
+					m.RangeInputs[m.SelectionCursor].Blur()
+				}
+				m.Focused = "leftSection"
+			}
+
+			// Toggle calculation mode and reset inputs
+			if m.CalculationMode == "flightTime" {
+				m.CalculationMode = "deltaTime"
+				// Reset and initialize range inputs for all selected weapons
+				m.RangeInputs = make([]textinput.Model, len(m.SelectedWeapons))
+				for i := range m.RangeInputs {
+					m.RangeInputs[i] = textinput.New()
+				}
+			} else {
+				m.CalculationMode = "flightTime"
+				// Reset the single range input
+				m.RangeInput.SetValue("")
+			}
+			// Reset sort state when changing modes
+			m.IsSorted = false
 		case "left", "right", "h", "l":
 			if m.Focused == "leftSection" {
 				m.Focused = "table"
@@ -500,7 +803,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
-	helpText := "↑/↓ k/j: Navigate • ←/→ h/l: Switch section • g/G: Top/Bottom"
+	helpText := "↑/↓ k/j: Navigate • ←/→ h/l: Switch section • g/G: Top/Bottom • Tab: Switch mode" + "(" + m.CalculationMode + ")"
 
 	if m.Focused == "table" {
 		helpText += " • /: Search • Enter: Add"
@@ -508,7 +811,7 @@ func (m Model) View() string {
 			helpText += fmt.Sprintf(" • Row %d/%d", m.TableCursor+1, len(m.FilteredTableRows))
 		}
 	} else if m.Focused == "leftSection" {
-		helpText += " • /: Edit Range • Del: Remove"
+		helpText += " • /: Edit Range • s: Sort • Del: Remove"
 		if len(m.SelectedWeapons) > 0 {
 			helpText += fmt.Sprintf(" • Selection %d/%d", m.SelectionCursor+1, len(m.SelectedWeapons))
 		}
@@ -610,10 +913,13 @@ func InitialModel(weapons []WeaponData) Model {
 		TableCursor:           0,
 		SearchInput:           searchInput,
 		RangeInput:            rangeInput,
+		RangeInputs:           []textinput.Model{},
 		Focused:               "table",
 		WeaponData:            weapons,
 		SelectionCursor:       0,
 		SelectionScrollOffset: 0,
+		CalculationMode:       "flightTime",
+		IsSorted:              false,
 	}
 
 	headerTitles := getHeaderTitles(headers)
