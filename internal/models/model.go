@@ -49,23 +49,44 @@ var headers = []HeaderColumn{
 	{Title: "Range", Width: 0.10},
 }
 
+// Calculate how many weapon items fit in the left section based on mode and height
+func (m *Model) getMaxVisibleItems() int {
+	// Section height calculation (same as in View())
+	// m.Height - 2 (top/bottom margin) - 1 (helpBar) = m.Height - 3
+	sectionHeight := m.Height - 3
+
+	// Account for section borders (top and bottom)
+	contentHeight := sectionHeight - 2
+
+	// Account for header box with border (~4 lines)
+	contentHeight -= 4
+
+	// Account for scroll indicators (1 line each when visible, but reserve space)
+	contentHeight -= 2
+
+	var itemHeight int
+	if m.CalculationMode == "flightTime" {
+		itemHeight = 10 // Each weapon item takes ~10 lines
+	} else if m.CalculationMode == "deltaTime" {
+		itemHeight = 14 // Each weapon item takes ~14 lines in delta time mode
+	}
+
+	maxVisibleItems := contentHeight / itemHeight
+
+	if maxVisibleItems < 1 {
+		maxVisibleItems = 1
+	}
+
+	return maxVisibleItems
+}
+
 func (m *Model) renderSelections() string {
 	if len(m.SelectedWeapons) == 0 {
 		return "No weapons selected"
 	}
 
-	// Calculate how many items fit (each item height varies by mode)
-	availableHeight := m.Height - 5 // Account for borders and help bar
-	var maxVisibleItems int
-	if m.CalculationMode == "flightTime" {
-		maxVisibleItems = availableHeight / 10
-	} else if m.CalculationMode == "deltaTime" {
-		// In delta time mode, items take up more space (especially when sorted)
-		maxVisibleItems = availableHeight / 14
-	}
-	if maxVisibleItems < 1 {
-		maxVisibleItems = 1
-	}
+	// Calculate how many items fit based on current mode and window height
+	maxVisibleItems := m.getMaxVisibleItems()
 
 	// Calculate visible range
 	startIdx := m.SelectionScrollOffset
@@ -495,16 +516,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.Focused == "leftSection" {
-			availableHeight := m.Height - 5
-			var maxVisibleItems int
-			if m.CalculationMode == "flightTime" {
-				maxVisibleItems = availableHeight / 10
-			} else if m.CalculationMode == "deltaTime" {
-				maxVisibleItems = availableHeight / 14
-			}
-			if maxVisibleItems < 1 {
-				maxVisibleItems = 1
-			}
+			maxVisibleItems := m.getMaxVisibleItems()
 
 			switch msg.String() {
 			case "up", "k":
