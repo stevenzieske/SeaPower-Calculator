@@ -1,9 +1,9 @@
 package main
 
 import (
-	"seapower_calculator/configs"
-	"seapower_calculator/internal/data"
-	"seapower_calculator/internal/tui"
+	"github.com/stevenzieske/SeaPower-Calculator/configs"
+	"github.com/stevenzieske/SeaPower-Calculator/internal/data"
+	"github.com/stevenzieske/SeaPower-Calculator/internal/tui"
 )
 
 var cfg = configs.Load()

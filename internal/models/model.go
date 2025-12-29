@@ -3,10 +3,11 @@ package models
 import (
 	"fmt"
 	"os"
-	"seapower_calculator/internal/helper"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/stevenzieske/SeaPower-Calculator/internal/helper"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"

@@ -1,4 +1,4 @@
-module seapower_calculator
+module github.com/stevenzieske/SeaPower-Calculator
 
 go 1.24.0
 

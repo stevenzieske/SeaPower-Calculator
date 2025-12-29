@@ -2,7 +2,8 @@ package tui
 
 import (
 	"log"
-	"seapower_calculator/internal/models"
+
+	"github.com/stevenzieske/SeaPower-Calculator/internal/models"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
