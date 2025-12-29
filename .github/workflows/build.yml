@@ -47,11 +47,11 @@ jobs:
       run: go mod download
 
     - name: Build
+      working-directory: ${{ github.workspace }}
       env:
         GOOS: ${{ matrix.goos }}
         GOARCH: ${{ matrix.goarch }}
         CGO_ENABLED: 0
-        GO111MODULE: on
       run: |
         # Set output filename based on OS
         if [ "$GOOS" = "windows" ]; then
@@ -60,8 +60,11 @@ jobs:
           OUTPUT_NAME="seapower-calculator-$GOOS-$GOARCH"
         fi
 
-        # Build the binary with explicit module mode
-        go build -v -trimpath -o "$OUTPUT_NAME" .
+        # Build the binary - use the module path
+        go build -v -trimpath -ldflags="-s -w" -o "$OUTPUT_NAME"
+
+        # Verify the build
+        ls -lh "$OUTPUT_NAME"
 
         # Make it executable (for Linux/macOS)
         chmod +x "$OUTPUT_NAME"
