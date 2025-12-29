@@ -1,4 +1,4 @@
-neme: Build Executables
+name: Build Executables
 
 on:
   push:
